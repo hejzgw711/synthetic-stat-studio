@@ -22,21 +22,30 @@ export function ensurePairwiseConstraints(settings: GeneratorSettings) {
 export const defaultSettings: GeneratorSettings = {
   projectName: '分组约束随机模拟', method: 'welch', tail: 'two-sided',
   groups: [
-    { id: 'group-1', name: 'Control', n: 6, meanOffset: 0, targetMean: 10, minValue: 0, maxValue: 30, targetSd: 1.2, color: colors[0] },
-    { id: 'group-2', name: 'Treatment', n: 6, meanOffset: 1.5, targetMean: 11.5, minValue: 0, maxValue: 30, targetSd: 1.2, color: colors[1] },
+    { id: 'group-1', name: 'Control', n: 6, meanOffset: 0, targetMean: 10, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[0] },
+    { id: 'group-2', name: 'Treatment', n: 6, meanOffset: 1.5, targetMean: 11.5, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[1] },
   ],
   pairwiseConstraints: [{ id: 'group-1::group-2', leftGroupId: 'group-1', rightGroupId: 'group-2', enabled: true, pMin: 0.01, pMax: 0.05 }],
-  trend: 'ascending', baselineMean: 10, effectMin: 0.5, effectMax: 3, targetPMin: 0.01, targetPMax: 0.05,
-  dataType: 'decimal', decimals: 2, distribution: 'normal', irregularity: 0.18, seedMode: 'random', seed: '20260819', maxAttempts: 50000,
+  trend: 'custom', baselineMean: 10, effectMin: 0.5, effectMax: 3, targetPMin: 0.01, targetPMax: 0.05,
+  dataType: 'decimal', decimals: 2, distribution: 'normal', irregularity: 0.18, seedMode: 'random', seed: '20260819', maxAttempts: 50000, batchMinValue: 0, batchMaxValue: null, batchTargetSd: 1.2,
 }
 
 function effectiveMethod(settings: GeneratorSettings) { return settings.groups.length >= 3 ? 'anova' as const : settings.method === 'anova' ? 'welch' as const : settings.method }
-function resolution(settings: GeneratorSettings) { return settings.dataType === 'integer' ? 1 : 1 / (10 ** settings.decimals) }
+function resolution(settings: GeneratorSettings) { return settings.dataType === 'integer' ? 1 : settings.decimals === null ? Number.EPSILON : 1 / (10 ** settings.decimals) }
+function displayPrecision(settings: GeneratorSettings) { return settings.decimals === null ? 6 : Math.max(2, settings.decimals) }
 function drawDeviation(rng: PRNG, settings: GeneratorSettings, sd: number) {
   const z = normal(rng)
   if (settings.distribution === 'normal') return z * sd
+  if (settings.distribution === 'lognormal') return z
   const direction = rng.quick() < 0.5 ? -1 : 1
   return sd * (0.82 * z + settings.irregularity * 0.18 * direction * (z * z - 1))
+}
+function drawLognormal(rng: PRNG, meanTarget: number, sd: number) {
+  const safeMean = Math.max(meanTarget, Number.EPSILON)
+  const varianceRatio = (sd / safeMean) ** 2
+  const sigma = Math.sqrt(Math.log1p(varianceRatio))
+  const mu = Math.log(safeMean) - (sigma ** 2) / 2
+  return Math.exp(mu + sigma * normal(rng))
 }
 function buildOffsets(settings: GeneratorSettings) { return settings.groups.map((group) => group.targetMean - settings.groups[0].targetMean) }
 function trendPass(settings: GeneratorSettings, summaries: ReturnType<typeof summarize>[]) {
@@ -66,8 +75,15 @@ function makeCandidate(settings: GeneratorSettings, masterSeed: string, attempt:
     if (method === 'paired' && groupIndex === 1) {
       const first = groupValues[0]
       const difference = meanTarget - settings.groups[0].targetMean
-      for (const value of first) values.push(formatValue(value + difference + drawDeviation(rng, settings, group.targetSd), settings.dataType, settings.decimals))
-    } else for (let index = 0; index < group.n; index += 1) values.push(formatValue(meanTarget + drawDeviation(rng, settings, group.targetSd), settings.dataType, settings.decimals))
+      if (settings.distribution === 'lognormal') {
+        const ratio = meanTarget / Math.max(settings.groups[0].targetMean, Number.EPSILON)
+        const sigma = Math.sqrt(Math.log1p((group.targetSd / Math.max(meanTarget, Number.EPSILON)) ** 2))
+        for (const value of first) values.push(formatValue(Math.max(Number.EPSILON, value * ratio * Math.exp(sigma * normal(rng))), settings.dataType, settings.decimals))
+      } else for (const value of first) values.push(formatValue(value + difference + drawDeviation(rng, settings, group.targetSd), settings.dataType, settings.decimals))
+    } else for (let index = 0; index < group.n; index += 1) {
+      const rawValue = settings.distribution === 'lognormal' ? drawLognormal(rng, meanTarget, group.targetSd) : meanTarget + drawDeviation(rng, settings, group.targetSd)
+      values.push(formatValue(rawValue, settings.dataType, settings.decimals))
+    }
     groupValues.push(values)
   }
   if (!groupValues.flat().every((value) => Number.isFinite(value))) return null
@@ -91,21 +107,21 @@ function makeCandidate(settings: GeneratorSettings, masterSeed: string, attempt:
   })
   const rangeChecks: ConstraintCheck[] = settings.groups.map((group, index) => {
     const values = groupValues[index]
-    const pass = values.every((value) => value >= group.minValue && value <= group.maxValue)
-    return { label: `${group.name} 范围`, status: pass ? 'PASS' : 'FAIL', detail: `${group.minValue}–${group.maxValue}` }
+    const pass = values.every((value) => value >= group.minValue && (group.maxValue === null || value <= group.maxValue))
+    return { label: `${group.name} 范围`, status: pass ? 'PASS' : 'FAIL', detail: `${group.minValue}–${group.maxValue === null ? '无上限' : group.maxValue}` }
   })
   const meanChecks: ConstraintCheck[] = settings.groups.map((group, index) => {
     const expected = group.targetMean
     const tolerance = Math.max(group.targetSd * 0.75, resolution(settings) * 2)
     const pass = Math.abs(summaries[index].mean - expected) <= tolerance
-    return { label: `${group.name} 均值`, status: pass ? 'PASS' : 'FAIL', detail: `实际 ${summaries[index].mean.toFixed(Math.max(2, settings.decimals))}；目标 ${expected.toFixed(Math.max(2, settings.decimals))} ± ${tolerance.toFixed(Math.max(2, settings.decimals))}` }
+    return { label: `${group.name} 均值`, status: pass ? 'PASS' : 'FAIL', detail: `实际 ${summaries[index].mean.toFixed(displayPrecision(settings))}；目标 ${expected.toFixed(displayPrecision(settings))} ± ${tolerance.toFixed(displayPrecision(settings))}` }
   })
   const sdChecks: ConstraintCheck[] = settings.groups.map((group, index) => {
     const observed = summaries[index].sd
     const pass = observed >= group.targetSd * 0.35 && observed <= group.targetSd * 1.65
     return { label: `${group.name} 离散度`, status: pass ? 'PASS' : 'FAIL', detail: `SD ${observed.toFixed(3)}；目标约 ${group.targetSd.toFixed(3)}` }
   })
-  const checks: ConstraintCheck[] = [...pairChecks, ...meanChecks, ...rangeChecks, ...sdChecks, { label: '组间趋势', status: trendPass(settings, summaries) ? 'PASS' : 'FAIL', detail: summaries.map((summary) => `${summary.name}=${summary.mean.toFixed(Math.max(2, settings.decimals))}`).join('；') }, { label: '数值格式', status: 'PASS', detail: settings.dataType === 'integer' ? '全部为整数' : `保留最多 ${settings.decimals} 位小数` }]
+  const checks: ConstraintCheck[] = [...pairChecks, ...meanChecks, ...rangeChecks, ...sdChecks, { label: '组间趋势', status: trendPass(settings, summaries) ? 'PASS' : 'FAIL', detail: summaries.map((summary) => `${summary.name}=${summary.mean.toFixed(displayPrecision(settings))}`).join('；') }, { label: '数值格式', status: 'PASS', detail: settings.dataType === 'integer' ? '全部为整数' : settings.decimals === null ? '小数位数不作要求' : `保留最多 ${settings.decimals} 位小数` }]
   const failCount = checks.filter((check) => check.status === 'FAIL').length
   const score = failCount * 100 + constraints.reduce((sum, constraint) => {
     if (constraint.enabled === false) return sum
@@ -119,14 +135,15 @@ export function validateSettings(settings: GeneratorSettings) {
   const issues: string[] = []
   if (settings.groups.length < 2) issues.push('至少需要 2 个组')
   if (settings.groups.some((group) => group.n < 2)) issues.push('每组至少需要 2 个样本')
-  if (settings.groups.some((group) => group.minValue >= group.maxValue)) issues.push('每组的最小值必须小于最大值')
+  if (settings.groups.some((group) => group.maxValue !== null && group.minValue >= group.maxValue)) issues.push('每组的最小值必须小于最大值')
   if (settings.groups.some((group) => group.targetSd <= 0)) issues.push('每组目标离散度 SD 必须大于 0')
   if (settings.groups.length > 2 && settings.method === 'paired') issues.push('三组及以上不能使用配对 t-test，系统将使用 one-way ANOVA')
   if (settings.groups.length === 2 && settings.method === 'anova') issues.push('只有两组时请使用 t-test；三组及以上自动使用 one-way ANOVA')
   if (settings.method === 'paired' && settings.groups.length === 2 && settings.groups[0].n !== settings.groups[1].n) issues.push('配对 t-test 要求两组样本量相同')
   const constraints = ensurePairwiseConstraints(settings)
   if (constraints.some((constraint) => constraint.enabled !== false && !(constraint.pMin >= 0 && constraint.pMax <= 1 && constraint.pMin < constraint.pMax))) issues.push('已勾选组对的 p 值范围必须满足 0 ≤ 最小值 < 最大值 ≤ 1')
-  if (settings.dataType === 'integer' && settings.groups.some((group) => group.maxValue - group.minValue < 2)) issues.push('整数范围过窄，至少应包含 3 个可能值')
+  if (settings.dataType === 'integer' && settings.groups.some((group) => group.maxValue !== null && group.maxValue - group.minValue < 2)) issues.push('整数范围过窄，至少应包含 3 个可能值')
+  if (settings.distribution === 'lognormal' && settings.groups.some((group) => group.targetMean <= 0 || group.minValue < 0)) issues.push('对数正态分布要求目标均值大于 0，且最小值不能小于 0')
   return issues
 }
 

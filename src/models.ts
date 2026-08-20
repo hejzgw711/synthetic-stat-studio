@@ -1,7 +1,7 @@
 export type TestMethod = 'welch' | 'student' | 'paired' | 'anova'
 export type Tail = 'two-sided' | 'greater' | 'less'
 export type DataType = 'decimal' | 'integer'
-export type Distribution = 'normal' | 'irregular'
+export type Distribution = 'normal' | 'irregular' | 'lognormal'
 export type Trend = 'ascending' | 'descending' | 'similar' | 'custom'
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL'
 
@@ -12,7 +12,7 @@ export interface GroupConfig {
   meanOffset: number
   targetMean: number
   minValue: number
-  maxValue: number
+  maxValue: number | null
   targetSd: number
   color: string
 }
@@ -40,12 +40,15 @@ export interface GeneratorSettings {
   targetPMin: number
   targetPMax: number
   dataType: DataType
-  decimals: number
+  decimals: number | null
   distribution: Distribution
   irregularity: number
   seedMode: 'random' | 'locked'
   seed: string
   maxAttempts: number
+  batchMinValue?: number
+  batchMaxValue?: number | null
+  batchTargetSd?: number
 }
 
 export interface Summary {

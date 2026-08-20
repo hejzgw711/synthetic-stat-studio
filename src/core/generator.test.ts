@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cloneSettings, defaultSettings, generateCandidates } from './generator'
+import { formatValue } from './random'
 import { runOneWayAnova, runTTest } from './statistics'
 
 describe('constraint random generator', () => {
@@ -44,5 +45,16 @@ describe('constraint random generator', () => {
     const candidate = generateCandidates(settings).candidates[0]
     expect(candidate.status).toBe('PASS')
     expect(candidate.checks.find((check) => check.label === 'Control vs Treatment p')).toMatchObject({ status: 'WARN' })
+  })
+
+  it('supports lognormal values with no maximum bound', () => {
+    const settings = cloneSettings(defaultSettings); settings.seedMode = 'locked'; settings.seed = 'lognormal-preview'; settings.distribution = 'lognormal'; settings.trend = 'custom'; settings.pairwiseConstraints[0].enabled = false; settings.groups.forEach((group) => { group.maxValue = null })
+    const candidate = generateCandidates(settings, 1).candidates[0]
+    expect(candidate.values.flat().every((value) => value > 0)).toBe(true)
+    expect(candidate.checks.filter((check) => check.label.endsWith('范围')).every((check) => check.status === 'PASS')).toBe(true)
+  })
+
+  it('leaves decimal values unrounded when decimal places are unrestricted', () => {
+    expect(formatValue(1.23456789, 'decimal', null)).toBe(1.23456789)
   })
 })

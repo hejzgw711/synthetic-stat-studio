@@ -66,6 +66,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .top-gap { margin-top: 12px; }
 .field { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 10px; }
 .field small { min-height: 12px; color: #6f8b86; line-height: 1.3; }
+.decimal-setting { display: grid; grid-template-columns: minmax(70px, 1fr) 88px; gap: 6px; }
+.decimal-setting button { min-height: 35px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--surface-2); font-size: 9px; }
+.decimal-setting button.active { color: var(--accent); border-color: var(--accent-dark); background: rgba(55, 183, 167, .18); }
 input, select { width: 100%; min-width: 0; height: 35px; padding: 0 10px; outline: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface-2); }
 input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(98, 211, 194, .1); }
 input:disabled { color: #66817d; background: #102522; }
@@ -78,6 +81,11 @@ input:disabled { color: #66817d; background: #102522; }
 .group-list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .group-card { display: grid; grid-template-columns: 34px minmax(150px, 1.5fr) 70px repeat(4, minmax(78px, 1fr)) 30px; gap: 8px; align-items: end; padding: 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); }
 .group-card .group-mark { background: var(--group-color); }
+.batch-range { margin-top: 12px; display: grid; grid-template-columns: minmax(140px, 1fr) repeat(3, minmax(78px, 100px)) 135px; gap: 10px; align-items: end; padding: 11px; border: 1px dashed var(--accent-dark); border-radius: 7px; background: rgba(55, 183, 167, .08); }
+.batch-range > div:first-child { display: flex; flex-direction: column; gap: 4px; align-self: center; }
+.batch-range strong { color: var(--accent); font-size: 11px; }
+.batch-range small { color: var(--muted); font-size: 9px; line-height: 1.35; }
+.batch-apply { min-height: 35px; }
 .remove-group { width: 30px; height: 35px; display: grid; place-items: center; border: 0; border-radius: 5px; color: var(--muted); background: transparent; }
 .remove-group:hover { color: var(--danger); background: var(--surface-3); }
 .add-group { min-height: 35px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed var(--border); border-radius: 6px; color: var(--accent); background: transparent; font-size: 11px; font-weight: 700; }
@@ -101,7 +109,7 @@ input:disabled { color: #66817d; background: #102522; }
 .auto-method { min-height: 35px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 10px; border: 1px solid var(--accent-dark); border-radius: 6px; color: var(--accent); background: rgba(55, 183, 167, .14); font-size: 11px; }
 .auto-method small { color: var(--muted); font-size: 9px; }
 
-.trend-control { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.trend-control { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .trend-control button, .p-presets button { min-height: 40px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--surface-2); }
 .trend-control button.active, .p-presets button.active { color: var(--accent); border-color: var(--accent-dark); background: rgba(55, 183, 167, .18); }
 .p-presets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }

@@ -20,8 +20,9 @@ export function normal(rng: seedrandom.PRNG, mean = 0, sd = 1) {
   return mean + sd * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
 }
 
-export function formatValue(value: number, type: 'decimal' | 'integer', decimals: number) {
+export function formatValue(value: number, type: 'decimal' | 'integer', decimals: number | null) {
   if (type === 'integer') return Math.round(value)
+  if (decimals === null) return value
   const factor = 10 ** decimals
   return Math.round(value * factor) / factor
 }

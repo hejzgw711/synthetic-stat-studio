@@ -11,6 +11,7 @@ import {
   Plus,
   Play,
   RefreshCw,
+  RotateCcw,
   Save,
   ShieldCheck,
   Sparkles,
@@ -143,6 +144,17 @@ export default function App() {
     draft.groups.forEach((group) => { group.minValue = minimum; group.maxValue = maximum; group.targetSd = targetSd })
   })
 
+  const resetForm = () => {
+    if (!window.confirm('清空当前设置并恢复初始模板？')) return
+    const freshSettings = cloneSettings(defaultSettings)
+    setSettings(freshSettings)
+    setReport(generateCandidates(cloneSettings(freshSettings)))
+    setSelectedIndex(0)
+    setDirty(false)
+    setErrorType('sd')
+    setNotice('已清空当前设置，可以重新填写')
+  }
+
   const generate = () => {
     setGenerating(true)
     setNotice('')
@@ -191,7 +203,7 @@ export default function App() {
   return <main className="app">
     <header className="topbar panel"><div className="brand"><span className="eyebrow">SYNTHETIC DATA STUDIO</span><h1>统计反推模拟数据生成器</h1><p>目标统计约束下的本地随机数据工作台</p></div><div className="top-actions">
       <input ref={fileInput} hidden type="file" accept=".json,.synthetic.json" onChange={(event) => event.target.files?.[0] && loadProject(event.target.files[0])} />
-      <button className="button secondary" onClick={() => fileInput.current?.click()}><FolderOpen size={17} />打开</button><button className="button secondary" onClick={() => saveProject(settings, report)}><Save size={17} />保存</button><button className="button primary" onClick={generate} disabled={generating}>{generating ? <RefreshCw className="spin" size={17} /> : <Sparkles size={17} />}{generating ? '搜索中' : '生成方案'}</button><button className="button warm" onClick={() => selected && exportXlsx(report, selected)}><FileDown size={17} />导出 XLSX</button><button className="button secondary" onClick={() => exportZip(report)}><FileArchive size={17} />候选 ZIP</button>
+      <button className="button reset" onClick={resetForm}><RotateCcw size={17} />清空重填</button><button className="button secondary" onClick={() => fileInput.current?.click()}><FolderOpen size={17} />打开</button><button className="button secondary" onClick={() => saveProject(settings, report)}><Save size={17} />保存</button><button className="button primary" onClick={generate} disabled={generating}>{generating ? <RefreshCw className="spin" size={17} /> : <Sparkles size={17} />}{generating ? '搜索中' : '生成方案'}</button><button className="button warm" onClick={() => selected && exportXlsx(report, selected)}><FileDown size={17} />导出 XLSX</button><button className="button secondary" onClick={() => exportZip(report)}><FileArchive size={17} />候选 ZIP</button>
     </div></header>
     <nav className="tabs"><button className="active"><BarChart3 size={16} />数据反推生成</button><span className="independent-badge">独立网页 · 本地计算</span>{dirty && <span className="dirty">参数已修改，请重新生成</span>}</nav>
     <div className="warning-banner"><AlertTriangle size={16} /><strong>SIMULATED / 合成模拟数据</strong><span>仅用于教学、绘图、统计方法验证和软件测试，不代表真实实验观测。</span></div>

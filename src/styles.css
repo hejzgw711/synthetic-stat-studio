@@ -45,6 +45,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .button:hover { border-color: var(--accent); filter: brightness(1.08); }
 .button.primary { color: #062a25; background: var(--accent); border-color: var(--accent); }
 .button.warm { color: #2c190d; background: var(--warm); border-color: #e4a577; }
+.button.reset { color: #efc39f; border-color: #6c4f3f; background: rgba(211, 139, 89, .12); }
+.button.reset:hover { border-color: #d89567; background: rgba(211, 139, 89, .2); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

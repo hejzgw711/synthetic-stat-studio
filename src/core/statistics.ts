@@ -1,5 +1,5 @@
 import { jStat } from 'jstat'
-import type { PairwiseResult, Summary, Tail, TestMethod, TestResult } from '../models'
+import type { PairwiseResult, Summary, Tail, TestMethod, TestResult, TwoWayAnovaResult } from '../models'
 
 export const mean = (values: number[]) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Number.NaN
 
@@ -82,6 +82,51 @@ export function runOneWayAnova(groups: Array<{ id: string; name: string; values:
   const pValue = statistic === Infinity ? 0 : statistic === 0 ? 1 : 1 - jStat.centralF.cdf(statistic, dfBetween, dfWithin)
   const ssTotal = ssBetween + ssWithin
   return { method: 'anova', tail: 'two-sided', statistic, degreesOfFreedom: dfWithin, effectSize: ssTotal === 0 ? 0 : ssBetween / ssTotal, pValue, dfBetween, dfWithin, pairwise: runPairwiseWelch(groups) }
+}
+
+export function runTwoWayAnova(
+  cells: Array<{ factorAIndex: number; factorBIndex: number; values: number[] }>,
+  factorAName: string,
+  factorALevels: string[],
+  factorBName: string,
+  factorBLevels: string[],
+): TestResult {
+  const expectedCellCount = factorALevels.length * factorBLevels.length
+  if (factorALevels.length < 2 || factorBLevels.length < 2) throw new Error('双因素 ANOVA 的两个因素都至少需要 2 个水平')
+  if (cells.length !== expectedCellCount) throw new Error('双因素 ANOVA 的数据单元格不完整')
+  const replicates = cells[0]?.values.length ?? 0
+  if (replicates < 2 || cells.some((cell) => cell.values.length !== replicates)) throw new Error('双因素 ANOVA 当前预览要求每个单元格的重复数相同，且至少为 2')
+  const cellAt = (a: number, b: number) => cells.find((cell) => cell.factorAIndex === a && cell.factorBIndex === b)!
+  const allValues = cells.flatMap((cell) => cell.values)
+  const grandMean = mean(allValues)
+  const cellMeans = factorALevels.map((_, a) => factorBLevels.map((_, b) => mean(cellAt(a, b).values)))
+  const factorAMeans = factorALevels.map((_, a) => mean(factorBLevels.flatMap((_, b) => cellAt(a, b).values)))
+  const factorBMeans = factorBLevels.map((_, b) => mean(factorALevels.flatMap((_, a) => cellAt(a, b).values)))
+  const sumSquares = (values: number[]) => values.reduce((sum, value) => sum + value ** 2, 0)
+  const ssA = factorBLevels.length * replicates * sumSquares(factorAMeans.map((value) => value - grandMean))
+  const ssB = factorALevels.length * replicates * sumSquares(factorBMeans.map((value) => value - grandMean))
+  const ssInteraction = replicates * cellMeans.reduce((sum, row, a) => sum + row.reduce((rowSum, value, b) => rowSum + (value - factorAMeans[a] - factorBMeans[b] + grandMean) ** 2, 0), 0)
+  const ssError = cells.reduce((sum, cell) => { const center = mean(cell.values); return sum + cell.values.reduce((cellSum, value) => cellSum + (value - center) ** 2, 0) }, 0)
+  const dfA = factorALevels.length - 1
+  const dfB = factorBLevels.length - 1
+  const dfInteraction = dfA * dfB
+  const dfError = expectedCellCount * (replicates - 1)
+  const msError = ssError / dfError
+  const effect = (name: string, ss: number, df: number) => {
+    const ms = ss / df
+    const statistic = msError === 0 ? (ms === 0 ? 0 : Infinity) : ms / msError
+    const pValue = statistic === Infinity ? 0 : statistic === 0 ? 1 : 1 - jStat.centralF.cdf(statistic, df, dfError)
+    return { name, degreesOfFreedom: df, sumOfSquares: ss, meanSquare: ms, statistic, pValue, effectSize: ss / Math.max(ss + ssError, Number.EPSILON) }
+  }
+  const twoWay: TwoWayAnovaResult = {
+    factorA: effect(factorAName, ssA, dfA),
+    factorB: effect(factorBName, ssB, dfB),
+    interaction: effect(`${factorAName} × ${factorBName}`, ssInteraction, dfInteraction),
+    residualDegreesOfFreedom: dfError,
+    totalDegreesOfFreedom: allValues.length - 1,
+    replicatesPerCell: replicates,
+  }
+  return { method: 'anova', tail: 'two-sided', design: 'two-way', statistic: twoWay.interaction.statistic, degreesOfFreedom: dfError, pValue: twoWay.interaction.pValue, effectSize: twoWay.interaction.effectSize, dfBetween: dfInteraction, dfWithin: dfError, twoWay }
 }
 
 export function runPairwiseWelch(groups: Array<{ id: string; name: string; values: number[] }>): PairwiseResult[] {

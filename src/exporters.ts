@@ -27,16 +27,34 @@ export async function exportXlsx(report: GenerationReport, selected: Candidate) 
   const workbook = new ExcelJS.Workbook(); workbook.creator = 'Synthetic Data Studio'; workbook.subject = 'SIMULATED TEACHING DATA'; workbook.created = new Date(0)
   const addSheet = (name: string, rows: unknown[][]) => { const sheet = workbook.addWorksheet(name); rows.forEach((row) => sheet.addRow(row)); sheet.views = [{ state: 'frozen', ySplit: 1 }]; sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }; sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF156B63' } }; sheet.columns.forEach((column) => { const lengths = (column.values ?? []).map((value) => String(value ?? '').length + 2); column.width = Math.min(42, Math.max(12, ...lengths)) }); return sheet }
   addSheet('README', [['字段', '内容'], ['声明', 'SIMULATED / 合成模拟数据，不代表真实实验观测'], ['用途', '仅用于教学、绘图、统计方法验证和软件测试'], ['项目', report.settings.projectName], ['Master seed', report.settings.seed], ['Candidate seed', selected.seed], ['随机抽样次数', report.attempts]])
-  addSheet('Constraints', [['Parameter', 'Value'], ['Trend', report.settings.trend], ['Data type', report.settings.dataType], ['Decimals', report.settings.decimals === null ? 'Unrestricted' : report.settings.decimals], ['Distribution', report.settings.distribution], ['Irregularity', report.settings.irregularity], ['Batch minimum', report.settings.batchMinValue ?? 0], ['Batch maximum', report.settings.batchMaxValue ?? 'Unrestricted'], ['Method', report.settings.method], ['Tail', report.settings.tail], ['Seed mode', report.settings.seedMode], ['Seed', report.settings.seed], ['Max attempts', report.settings.maxAttempts]])
+  addSheet('Constraints', [['Parameter', 'Value'], ['Analysis design', report.settings.analysisDesign ?? 'single'], ['Trend', report.settings.trend], ['Data type', report.settings.dataType], ['Decimals', report.settings.decimals === null ? 'Unrestricted' : report.settings.decimals], ['Distribution', report.settings.distribution], ['Irregularity', report.settings.irregularity], ['Batch n', report.settings.batchN ?? 8], ['Batch minimum', report.settings.batchMinValue ?? 0], ['Batch maximum', report.settings.batchMaxValue ?? 'Unrestricted'], ['Method', report.settings.method], ['Tail', report.settings.tail], ['Seed mode', report.settings.seedMode], ['Seed', report.settings.seed], ['Max attempts', report.settings.maxAttempts]])
   addSheet('Groups', [['Group ID', 'Name', 'n', 'Target mean', 'Minimum', 'Maximum', 'Target SD', 'Color'], ...report.settings.groups.map((group) => [group.id, group.name, group.n, group.targetMean, group.minValue, group.maxValue, group.targetSd, group.color])])
   addSheet('Pairwise_Constraints', [['Left group', 'Right group', 'Constrained', 'p minimum', 'p maximum'], ...report.settings.pairwiseConstraints.map((constraint) => [report.settings.groups.find((group) => group.id === constraint.leftGroupId)?.name ?? constraint.leftGroupId, report.settings.groups.find((group) => group.id === constraint.rightGroupId)?.name ?? constraint.rightGroupId, constraint.enabled !== false ? 'Yes' : 'No', constraint.pMin, constraint.pMax])])
   addSheet('Raw_Data', rawRows(selected, report.settings))
   addSheet('Summary', [['Group', 'n', 'Mean', 'SD', 'SEM', '95% CI low', '95% CI high'], ...selected.summaries.map((summary) => [summary.name, summary.n, summary.mean, summary.sd, summary.sem, summary.ciLow, summary.ciHigh])])
   addSheet('Test_Result', [['Field', 'Value'], ['Method', selected.test.method], ['Statistic', selected.test.statistic], ['df', selected.test.method === 'anova' ? `${selected.test.dfBetween},${selected.test.dfWithin}` : selected.test.degreesOfFreedom], ['P value', selected.test.pValue], ['Effect size', selected.test.effectSize], ['Status', selected.status]])
   if (selected.test.pairwise) addSheet('Pairwise_FDR', [['Left', 'Right', 'p', 'BH-FDR', 'Label'], ...selected.test.pairwise.map((pair) => [pair.leftGroupName, pair.rightGroupName, pair.pValue, pair.adjustedPValue, pair.label])])
+  if (selected.test.twoWay && report.settings.twoWay) addSheet('TwoWay_ANOVA', [['Effect', 'df', 'SS', 'MS', 'F', 'p', 'Partial eta squared'], ...[selected.test.twoWay.factorA, selected.test.twoWay.factorB, selected.test.twoWay.interaction].map((effect) => [effect.name, effect.degreesOfFreedom, effect.sumOfSquares, effect.meanSquare, effect.statistic, effect.pValue, effect.effectSize]), ['Residual', selected.test.twoWay.residualDegreesOfFreedom, '', '', '', '', '']])
   addSheet('Validation', [['Constraint', 'Status', 'Detail'], ...selected.checks.map((check) => [check.label, check.status, check.detail])])
   addSheet('Generation_Log', [['Field', 'Value'], ['Started', report.startedAt], ['Completed', report.completedAt], ['Attempts', report.attempts], ['Message', report.message]])
   const buffer = await workbook.xlsx.writeBuffer(); downloadBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${safeName(report.settings.projectName)}.xlsx`)
 }
 
 export async function copyPrismColumns(candidate: Candidate, settings: GeneratorSettings) { await navigator.clipboard.writeText(rawRows(candidate, settings).map((row) => row.slice(1).join('\t')).slice(0).join('\n')) }
+
+export async function copyPrismGrouped(candidate: Candidate, settings: GeneratorSettings) {
+  const twoWay = settings.twoWay
+  if (!twoWay) return copyPrismColumns(candidate, settings)
+  const replicates = twoWay.cells[0]?.n ?? 0
+  const rows: string[][] = []
+  rows.push(['', ...twoWay.factorA.levels.flatMap((level) => Array.from({ length: replicates }, () => level))])
+  rows.push(['', ...twoWay.factorA.levels.flatMap(() => Array.from({ length: replicates }, (_, index) => String(index + 1)))])
+  twoWay.factorB.levels.forEach((levelB, factorBIndex) => {
+    const values = twoWay.factorA.levels.flatMap((_, factorAIndex) => {
+      const cellIndex = twoWay.cells.findIndex((cell) => cell.factorAIndex === factorAIndex && cell.factorBIndex === factorBIndex)
+      return candidate.values[cellIndex] ?? []
+    })
+    rows.push([levelB, ...values.map(String)])
+  })
+  await navigator.clipboard.writeText(rows.map((row) => row.join('\t')).join('\n'))
+}

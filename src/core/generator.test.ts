@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cloneSettings, defaultSettings, generateCandidates } from './generator'
 import { formatValue } from './random'
-import { runOneWayAnova, runTTest } from './statistics'
+import { runOneWayAnova, runTTest, runTwoWayAnova } from './statistics'
 
 describe('constraint random generator', () => {
   it('reproduces identical candidates when the seed is locked', () => {
@@ -25,7 +25,7 @@ describe('constraint random generator', () => {
   it('uses paired differences for a paired t-test', () => {
     const settings = cloneSettings(defaultSettings); settings.method = 'paired'; settings.seedMode = 'locked'; settings.seed = 'paired-test'
     const candidate = generateCandidates(settings).candidates[0]
-    expect(candidate.test.degreesOfFreedom).toBe(5); expect(candidate.test.method).toBe('paired')
+    expect(candidate.test.degreesOfFreedom).toBe(7); expect(candidate.test.method).toBe('paired')
   })
 
   it('uses a new master seed in random mode', () => {
@@ -56,5 +56,17 @@ describe('constraint random generator', () => {
 
   it('leaves decimal values unrounded when decimal places are unrestricted', () => {
     expect(formatValue(1.23456789, 'decimal', null)).toBe(1.23456789)
+  })
+
+  it('generates a dynamic m by k two-way design and reports three effects', () => {
+    const settings = cloneSettings(defaultSettings)
+    settings.analysisDesign = 'twoWay'
+    settings.twoWay = { factorA: { name: 'Model', levels: ['Sham', 'TBI', 'Recovery'] }, factorB: { name: 'Treatment', levels: ['NC', 'KO'] }, cells: [] }
+    settings.twoWay.cells = settings.twoWay.factorA.levels.flatMap((_, factorAIndex) => settings.twoWay!.factorB.levels.map((_, factorBIndex) => ({ id: `cell-${factorAIndex}-${factorBIndex}`, factorAIndex, factorBIndex, n: 6, targetMean: 10 + factorAIndex * 2 + factorBIndex, minValue: 0, maxValue: 30, targetSd: 1.2, color: '#9acddb' })))
+    settings.pairwiseConstraints = [{ id: 'cell-0-0::cell-0-1', leftGroupId: 'cell-0-0', rightGroupId: 'cell-0-1', enabled: true, pMin: 0, pMax: 1 }]
+    settings.seedMode = 'locked'; settings.seed = 'two-way-test'; settings.maxAttempts = 50000
+    const candidate = generateCandidates(settings, 1).candidates[0]
+    const recalculated = runTwoWayAnova(settings.twoWay.cells.map((cell, index) => ({ factorAIndex: cell.factorAIndex, factorBIndex: cell.factorBIndex, values: candidate.values[index] })), 'Model', ['Sham', 'TBI', 'Recovery'], 'Treatment', ['NC', 'KO'])
+    expect(candidate.status).toBe('PASS'); expect(candidate.test.design).toBe('two-way'); expect(candidate.test.pairwise).toHaveLength(15); expect(candidate.test.twoWay?.factorA.pValue).toBe(recalculated.twoWay?.factorA.pValue); expect(candidate.test.twoWay?.factorB.pValue).toBe(recalculated.twoWay?.factorB.pValue); expect(candidate.test.twoWay?.interaction.pValue).toBe(recalculated.twoWay?.interaction.pValue)
   })
 })

@@ -1,33 +1,53 @@
 import type { PRNG } from 'seedrandom'
 import type { Candidate, ConstraintCheck, GenerationReport, GeneratorSettings, GroupConfig, PairwiseConstraint } from '../models'
 import { createRandomSeed, formatValue, normal, scopedRng, uniform } from './random'
-import { runOneWayAnova, runTTest, sampleSd, summarize } from './statistics'
+import { runOneWayAnova, runPairwiseWelch, runTTest, runTwoWayAnova, sampleSd, summarize } from './statistics'
 
 const colors = ['#9acddb', '#e7ad97', '#b7d8aa', '#c4b0dd', '#e3c58d', '#9fb5d8']
 
 export function pairwiseId(leftGroupId: string, rightGroupId: string) { return `${leftGroupId}::${rightGroupId}` }
 
-export function ensurePairwiseConstraints(settings: GeneratorSettings) {
+function twoWayCellName(settings: GeneratorSettings, cell: { factorAIndex: number; factorBIndex: number }) {
+  const twoWay = settings.twoWay!
+  return `${twoWay.factorA.levels[cell.factorAIndex]} · ${twoWay.factorB.levels[cell.factorBIndex]}`
+}
+
+export function syncTwoWayGroups(settings: GeneratorSettings) {
+  if (settings.analysisDesign !== 'twoWay' || !settings.twoWay) return settings
+  const current = new Map(settings.twoWay.cells.map((cell) => [cell.id, cell]))
+  const cells = settings.twoWay.factorA.levels.flatMap((_, factorAIndex) => settings.twoWay!.factorB.levels.map((_, factorBIndex) => {
+    const id = `cell-${factorAIndex}-${factorBIndex}`
+    const previous = current.get(id)
+    return previous ?? { id, factorAIndex, factorBIndex, n: 8, targetMean: 10 + factorAIndex + factorBIndex, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[(factorAIndex * settings.twoWay!.factorB.levels.length + factorBIndex) % colors.length] }
+  }))
+  settings.twoWay.cells = cells
+  settings.groups = cells.map((cell) => ({ id: cell.id, name: twoWayCellName(settings, cell), n: cell.n, meanOffset: cell.targetMean - cells[0].targetMean, targetMean: cell.targetMean, minValue: cell.minValue, maxValue: cell.maxValue, targetSd: cell.targetSd, color: cell.color }))
+  settings.pairwiseConstraints = ensurePairwiseConstraints(settings, false)
+  return settings
+}
+
+export function ensurePairwiseConstraints(settings: GeneratorSettings, defaultEnabled = true) {
   const existing = new Map(settings.pairwiseConstraints.map((constraint) => [pairwiseId(constraint.leftGroupId, constraint.rightGroupId), constraint]))
   const next: PairwiseConstraint[] = []
   for (let left = 0; left < settings.groups.length; left += 1) for (let right = left + 1; right < settings.groups.length; right += 1) {
     const first = settings.groups[left]
     const second = settings.groups[right]
     const id = pairwiseId(first.id, second.id)
-    next.push(existing.get(id) ?? { id, leftGroupId: first.id, rightGroupId: second.id, enabled: true, pMin: 0.01, pMax: 0.05 })
+    next.push(existing.get(id) ?? { id, leftGroupId: first.id, rightGroupId: second.id, enabled: defaultEnabled, pMin: 0.01, pMax: 0.05 })
   }
   return next
 }
 
 export const defaultSettings: GeneratorSettings = {
-  projectName: '分组约束随机模拟', method: 'welch', tail: 'two-sided',
+  projectName: '分组约束随机模拟', analysisDesign: 'single', method: 'welch', tail: 'two-sided',
   groups: [
-    { id: 'group-1', name: 'Control', n: 6, meanOffset: 0, targetMean: 10, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[0] },
-    { id: 'group-2', name: 'Treatment', n: 6, meanOffset: 1.5, targetMean: 11.5, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[1] },
+    { id: 'group-1', name: 'Control', n: 8, meanOffset: 0, targetMean: 10, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[0] },
+    { id: 'group-2', name: 'Treatment', n: 8, meanOffset: 1.5, targetMean: 11.5, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[1] },
   ],
   pairwiseConstraints: [{ id: 'group-1::group-2', leftGroupId: 'group-1', rightGroupId: 'group-2', enabled: true, pMin: 0.01, pMax: 0.05 }],
   trend: 'custom', baselineMean: 10, effectMin: 0.5, effectMax: 3, targetPMin: 0.01, targetPMax: 0.05,
-  dataType: 'decimal', decimals: 2, distribution: 'normal', irregularity: 0.18, seedMode: 'random', seed: '20260819', maxAttempts: 50000, batchMinValue: 0, batchMaxValue: null, batchTargetSd: 1.2,
+  dataType: 'decimal', decimals: 2, distribution: 'normal', irregularity: 0.18, seedMode: 'random', seed: '20260819', maxAttempts: 50000, batchN: 8, batchMinValue: 0, batchMaxValue: null, batchTargetSd: 1.2,
+  twoWay: { factorA: { name: '因素 A', levels: ['水平 A1', '水平 A2'] }, factorB: { name: '因素 B', levels: ['水平 B1', '水平 B2', '水平 B3'] }, cells: [0, 1].flatMap((factorAIndex) => [0, 1, 2].map((factorBIndex) => ({ id: `cell-${factorAIndex}-${factorBIndex}`, factorAIndex, factorBIndex, n: 8, targetMean: 10 + factorAIndex + factorBIndex, minValue: 0, maxValue: null, targetSd: 1.2, color: colors[factorAIndex * 3 + factorBIndex] }))) },
 }
 
 function effectiveMethod(settings: GeneratorSettings) { return settings.groups.length >= 3 ? 'anova' as const : settings.method === 'anova' ? 'welch' as const : settings.method }
@@ -89,10 +109,17 @@ function makeCandidate(settings: GeneratorSettings, masterSeed: string, attempt:
   if (!groupValues.flat().every((value) => Number.isFinite(value))) return null
   const summaries = settings.groups.map((group, index) => summarize(group.id, group.name, groupValues[index]))
   let test: Candidate['test']
-  try { test = method === 'anova' ? runOneWayAnova(settings.groups.map((group, index) => ({ id: group.id, name: group.name, values: groupValues[index] }))) : runTTest(groupValues[0], groupValues[1], method, settings.tail) } catch { return null }
+  try {
+    test = settings.analysisDesign === 'twoWay'
+      ? runTwoWayAnova(settings.groups.map((group, index) => ({ factorAIndex: settings.twoWay!.cells[index].factorAIndex, factorBIndex: settings.twoWay!.cells[index].factorBIndex, values: groupValues[index] })), settings.twoWay!.factorA.name, settings.twoWay!.factorA.levels, settings.twoWay!.factorB.name, settings.twoWay!.factorB.levels)
+      : method === 'anova'
+        ? runOneWayAnova(settings.groups.map((group, index) => ({ id: group.id, name: group.name, values: groupValues[index] })))
+        : runTTest(groupValues[0], groupValues[1], method, settings.tail)
+  } catch { return null }
+  if (settings.analysisDesign === 'twoWay') test.pairwise = runPairwiseWelch(settings.groups.map((group, index) => ({ id: group.id, name: group.name, values: groupValues[index] })))
   if (!Number.isFinite(test.pValue)) return null
   const pairwise = pairwisePValues(settings, groupValues, test)
-  const constraints = ensurePairwiseConstraints(settings)
+  const constraints = ensurePairwiseConstraints(settings, settings.analysisDesign !== 'twoWay')
   const pairChecks: ConstraintCheck[] = constraints.map((constraint) => {
     const observed = pairwise.find((pair) => pair.leftGroupId === constraint.leftGroupId && pair.rightGroupId === constraint.rightGroupId)
     if (constraint.enabled === false) {
@@ -133,6 +160,16 @@ function makeCandidate(settings: GeneratorSettings, masterSeed: string, attempt:
 
 export function validateSettings(settings: GeneratorSettings) {
   const issues: string[] = []
+  if (settings.analysisDesign === 'twoWay') {
+    if (!settings.twoWay) issues.push('双因素 ANOVA 缺少因素设置')
+    else {
+      const cells = settings.twoWay.cells
+      if (settings.twoWay.factorA.levels.length < 2 || settings.twoWay.factorB.levels.length < 2) issues.push('双因素 ANOVA 的两个因素都至少需要 2 个水平')
+      if (cells.length !== settings.twoWay.factorA.levels.length * settings.twoWay.factorB.levels.length) issues.push('双因素 ANOVA 的数据单元格不完整')
+      if (cells.some((cell) => cell.n < 2)) issues.push('双因素 ANOVA 每个单元格至少需要 2 个样本')
+      if (new Set(cells.map((cell) => cell.n)).size > 1) issues.push('当前本地预览要求双因素 ANOVA 每个单元格的 n 相同')
+    }
+  }
   if (settings.groups.length < 2) issues.push('至少需要 2 个组')
   if (settings.groups.some((group) => group.n < 2)) issues.push('每组至少需要 2 个样本')
   if (settings.groups.some((group) => group.maxValue !== null && group.minValue >= group.maxValue)) issues.push('每组的最小值必须小于最大值')
@@ -140,7 +177,7 @@ export function validateSettings(settings: GeneratorSettings) {
   if (settings.groups.length > 2 && settings.method === 'paired') issues.push('三组及以上不能使用配对 t-test，系统将使用 one-way ANOVA')
   if (settings.groups.length === 2 && settings.method === 'anova') issues.push('只有两组时请使用 t-test；三组及以上自动使用 one-way ANOVA')
   if (settings.method === 'paired' && settings.groups.length === 2 && settings.groups[0].n !== settings.groups[1].n) issues.push('配对 t-test 要求两组样本量相同')
-  const constraints = ensurePairwiseConstraints(settings)
+  const constraints = ensurePairwiseConstraints(settings, settings.analysisDesign !== 'twoWay')
   if (constraints.some((constraint) => constraint.enabled !== false && !(constraint.pMin >= 0 && constraint.pMax <= 1 && constraint.pMin < constraint.pMax))) issues.push('已勾选组对的 p 值范围必须满足 0 ≤ 最小值 < 最大值 ≤ 1')
   if (settings.dataType === 'integer' && settings.groups.some((group) => group.maxValue !== null && group.maxValue - group.minValue < 2)) issues.push('整数范围过窄，至少应包含 3 个可能值')
   if (settings.distribution === 'lognormal' && settings.groups.some((group) => group.targetMean <= 0 || group.minValue < 0)) issues.push('对数正态分布要求目标均值大于 0，且最小值不能小于 0')
@@ -148,9 +185,10 @@ export function validateSettings(settings: GeneratorSettings) {
 }
 
 export function generateCandidates(settings: GeneratorSettings, candidateCount = 3): GenerationReport {
-  const issues = validateSettings(settings)
+  const prepared = syncTwoWayGroups({ ...settings, twoWay: settings.twoWay ? JSON.parse(JSON.stringify(settings.twoWay)) : undefined })
+  const issues = validateSettings(prepared)
   if (issues.length) throw new Error(issues.join('；'))
-  const normalized = { ...settings, pairwiseConstraints: ensurePairwiseConstraints(settings) }
+  const normalized = { ...prepared, pairwiseConstraints: ensurePairwiseConstraints(prepared, prepared.analysisDesign !== 'twoWay') }
   const startedAt = new Date().toISOString(); const masterSeed = settings.seedMode === 'locked' ? settings.seed : createRandomSeed(); const accepted: Candidate[] = []; const nearest: Candidate[] = []; let attempts = 0
   for (let attempt = 1; attempt <= settings.maxAttempts && accepted.length < candidateCount; attempt += 1) { attempts = attempt; const candidate = makeCandidate(normalized, masterSeed, attempt); if (!candidate) continue; if (candidate.status === 'PASS') accepted.push(candidate); else { nearest.push(candidate); nearest.sort((left, right) => left.score - right.score); if (nearest.length > 3) nearest.pop() } }
   const enabledCount = normalized.pairwiseConstraints.filter((constraint) => constraint.enabled !== false).length

@@ -1,4 +1,5 @@
 export type TestMethod = 'welch' | 'student' | 'paired' | 'anova'
+export type AnalysisDesign = 'single' | 'twoWay'
 export type Tail = 'two-sided' | 'greater' | 'less'
 export type DataType = 'decimal' | 'integer'
 export type Distribution = 'normal' | 'irregular' | 'lognormal'
@@ -27,8 +28,32 @@ export interface PairwiseConstraint {
   pMax: number
 }
 
+export interface TwoWayFactor {
+  name: string
+  levels: string[]
+}
+
+export interface TwoWayCellConfig {
+  id: string
+  factorAIndex: number
+  factorBIndex: number
+  n: number
+  targetMean: number
+  minValue: number
+  maxValue: number | null
+  targetSd: number
+  color: string
+}
+
+export interface TwoWaySettings {
+  factorA: TwoWayFactor
+  factorB: TwoWayFactor
+  cells: TwoWayCellConfig[]
+}
+
 export interface GeneratorSettings {
   projectName: string
+  analysisDesign?: AnalysisDesign
   method: TestMethod
   tail: Tail
   groups: GroupConfig[]
@@ -46,9 +71,11 @@ export interface GeneratorSettings {
   seedMode: 'random' | 'locked'
   seed: string
   maxAttempts: number
+  batchN?: number
   batchMinValue?: number
   batchMaxValue?: number | null
   batchTargetSd?: number
+  twoWay?: TwoWaySettings
 }
 
 export interface Summary {
@@ -75,6 +102,25 @@ export interface PairwiseResult {
   label: string
 }
 
+export interface AnovaEffectResult {
+  name: string
+  degreesOfFreedom: number
+  sumOfSquares: number
+  meanSquare: number
+  statistic: number
+  pValue: number
+  effectSize: number
+}
+
+export interface TwoWayAnovaResult {
+  factorA: AnovaEffectResult
+  factorB: AnovaEffectResult
+  interaction: AnovaEffectResult
+  residualDegreesOfFreedom: number
+  totalDegreesOfFreedom: number
+  replicatesPerCell: number
+}
+
 export interface TestResult {
   method: TestMethod
   tail: Tail
@@ -85,6 +131,8 @@ export interface TestResult {
   dfBetween?: number
   dfWithin?: number
   pairwise?: PairwiseResult[]
+  design?: 'one-way' | 'two-way'
+  twoWay?: TwoWayAnovaResult
 }
 
 export interface ConstraintCheck {

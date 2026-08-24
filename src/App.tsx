@@ -21,9 +21,9 @@ import {
 import { useRef, useState, type ReactNode } from 'react'
 import ReactECharts from 'echarts-for-react'
 import { ResultChart } from './components/ResultChart'
-import { cloneSettings, defaultSettings, ensurePairwiseConstraints, generateCandidates } from './core/generator'
-import { copyPrismColumns, exportCsv, exportXlsx, exportZip, saveProject } from './exporters'
-import type { Candidate, GenerationReport, GeneratorSettings, GroupConfig } from './models'
+import { cloneSettings, defaultSettings, ensurePairwiseConstraints, generateCandidates, syncTwoWayGroups } from './core/generator'
+import { copyPrismColumns, copyPrismGrouped, exportCsv, exportXlsx, exportZip, saveProject } from './exporters'
+import type { Candidate, GenerationReport, GeneratorSettings, GroupConfig, TwoWayCellConfig, TwoWaySettings } from './models'
 
 const colors = ['#9acddb', '#e7ad97', '#b7d8aa', '#c4b0dd', '#e3c58d', '#9fb5d8']
 
@@ -48,7 +48,8 @@ function formatP(value: number) {
   return value.toFixed(5)
 }
 
-function methodLabel(method: GeneratorSettings['method']) {
+function methodLabel(method: GeneratorSettings['method'], design?: Candidate['test']['design']) {
+  if (design === 'two-way') return 'Ordinary two-way ANOVA'
   if (method === 'student') return "Student's unpaired t-test"
   if (method === 'paired') return 'Paired t-test'
   if (method === 'anova') return 'One-way ANOVA'
@@ -91,10 +92,35 @@ function PairwiseConstraintPanel({ settings, onEdit }: { settings: GeneratorSett
   </>
 }
 
+function TwoWayEditor({ settings, onEdit }: { settings: GeneratorSettings; onEdit: (mutator: (draft: GeneratorSettings) => void) => void }) {
+  const twoWay = settings.twoWay!
+  const cellAt = (factorAIndex: number, factorBIndex: number) => twoWay.cells.find((cell) => cell.factorAIndex === factorAIndex && cell.factorBIndex === factorBIndex)!
+  const editTwoWay = (mutator: (draft: TwoWaySettings) => void) => onEdit((draft) => { if (!draft.twoWay) return; mutator(draft.twoWay); syncTwoWayGroups(draft) })
+  const addLevel = (factor: 'factorA' | 'factorB') => editTwoWay((draft) => { const index = draft[factor].levels.length + 1; draft[factor].levels.push(`${factor === 'factorA' ? '水平 A' : '水平 B'}${index}`) })
+  const removeLevel = (factor: 'factorA' | 'factorB') => editTwoWay((draft) => { if (draft[factor].levels.length > 2) draft[factor].levels.pop() })
+  const updateCell = (cellId: string, mutator: (cell: TwoWayCellConfig) => void) => editTwoWay((draft) => { const cell = draft.cells.find((item) => item.id === cellId); if (cell) mutator(cell) })
+  const applyBatchTwoWay = () => onEdit((draft) => { if (!draft.twoWay) return; const n = draft.batchN ?? 8; const minimum = draft.batchMinValue ?? 0; const maximum = draft.batchMaxValue ?? null; const targetSd = draft.batchTargetSd ?? 1.2; draft.twoWay.cells.forEach((cell) => { cell.n = n; cell.minValue = minimum; cell.maxValue = maximum; cell.targetSd = targetSd }); syncTwoWayGroups(draft) })
+  return <div className="two-way-editor">
+    <div className="factor-config-grid">
+      {(['factorA', 'factorB'] as const).map((factor) => <div className="factor-config" key={factor}><strong className="factor-title">{factor === 'factorA' ? '因素 A' : '因素 B'}</strong><div className="level-list">{twoWay[factor].levels.map((level, index) => <div className="level-row" key={`${factor}-${index}`}><input value={level} onChange={(event) => editTwoWay((draft) => { draft[factor].levels[index] = event.target.value })} /><button className="remove-level" disabled={twoWay[factor].levels.length <= 2} title="删除水平" onClick={() => editTwoWay((draft) => { if (draft[factor].levels.length > 2) draft[factor].levels.splice(index, 1) })}><X size={13} /></button></div>)}<div className="level-actions"><button className="add-level" onClick={() => addLevel(factor)}><Plus size={14} />添加水平</button><button className="remove-level-text" disabled={twoWay[factor].levels.length <= 2} onClick={() => removeLevel(factor)}>删除末个水平</button></div></div></div>)}
+    </div>
+    <div className="two-way-note">当前本地预览采用 ordinary two-way ANOVA；每个单元格的 n 需要保持一致。每格仍可单独设置目标均值、SD 和范围。</div>
+    <div className="batch-range two-way-batch"><div><strong>批量设置</strong><small>应用后覆盖所有单元格；单元格仍可继续单独修改</small></div><Field label="批量 n"><Numeric value={settings.batchN ?? 8} min={2} max={50} onChange={(value) => onEdit((draft) => { draft.batchN = value })} /></Field><Field label="批量最小值"><Numeric value={settings.batchMinValue ?? 0} step={0.1} onChange={(value) => onEdit((draft) => { draft.batchMinValue = value })} /></Field><Field label="批量最大值"><OptionalNumeric value={settings.batchMaxValue} step={0.1} placeholder="不限制" onChange={(value) => onEdit((draft) => { draft.batchMaxValue = value })} /></Field><Field label="批量离散 SD"><Numeric value={settings.batchTargetSd ?? 1.2} min={0.01} step={0.1} onChange={(value) => onEdit((draft) => { draft.batchTargetSd = value })} /></Field><button className="button secondary batch-apply" onClick={applyBatchTwoWay}>应用到所有单元格</button></div>
+    <div className="two-way-grid-wrap"><table className="two-way-grid"><thead><tr><th>{twoWay.factorB.name} \ {twoWay.factorA.name}</th>{twoWay.factorB.levels.map((level) => <th key={level}>{level}</th>)}</tr></thead><tbody>{twoWay.factorA.levels.map((level, factorAIndex) => <tr key={level}><th>{level}</th>{twoWay.factorB.levels.map((_, factorBIndex) => { const cell = cellAt(factorAIndex, factorBIndex); return <td key={cell.id}><div className="cell-config"><Field label="n"><Numeric value={cell.n} min={2} max={50} onChange={(value) => updateCell(cell.id, (item) => { item.n = value })} /></Field><Field label="均值"><Numeric value={cell.targetMean} step={0.1} onChange={(value) => updateCell(cell.id, (item) => { item.targetMean = value })} /></Field><Field label="SD"><Numeric value={cell.targetSd} min={0.01} step={0.1} onChange={(value) => updateCell(cell.id, (item) => { item.targetSd = value })} /></Field><div className="cell-range"><Field label="最小"><Numeric value={cell.minValue} step={0.1} onChange={(value) => updateCell(cell.id, (item) => { item.minValue = value })} /></Field><Field label="最大"><OptionalNumeric value={cell.maxValue} step={0.1} placeholder="不限制" onChange={(value) => updateCell(cell.id, (item) => { item.maxValue = value })} /></Field></div></div></td> })}</tr>)}</tbody></table></div>
+  </div>
+}
+
+function TwoWayRawTable({ candidate, settings }: { candidate: Candidate; settings: GeneratorSettings }) {
+  const twoWay = settings.twoWay!
+  const cellAt = (factorAIndex: number, factorBIndex: number) => twoWay.cells.find((cell) => cell.factorAIndex === factorAIndex && cell.factorBIndex === factorBIndex)!
+  const replicates = twoWay.cells[0]?.n ?? 0
+  return <table className="two-way-raw-table"><thead><tr><th rowSpan={2}>{twoWay.factorB.name}</th>{twoWay.factorA.levels.map((level) => <th key={level} colSpan={replicates}>{level}</th>)}</tr><tr>{twoWay.factorA.levels.flatMap((_, factorAIndex) => Array.from({ length: replicates }, (_, replicate) => <th key={`${factorAIndex}-${replicate}`}>{String.fromCharCode(65 + factorAIndex)}:{replicate + 1}</th>))}</tr></thead><tbody>{twoWay.factorB.levels.map((level, factorBIndex) => <tr key={level}><th>{level}</th>{twoWay.factorA.levels.flatMap((_, factorAIndex) => { const cell = cellAt(factorAIndex, factorBIndex); const cellIndex = twoWay.cells.findIndex((item) => item.id === cell.id); return (candidate.values[cellIndex] ?? []).map((value, index) => <td key={`${cell.id}-${index}`}>{value}</td>) })}</tr>)}</tbody></table>
+}
+
 function nextGroup(settings: GeneratorSettings): GroupConfig {
   const index = settings.groups.length
   const previous = settings.groups[index - 1]
-  return { id: `group-${Date.now()}-${index}`, name: `Group ${index + 1}`, n: 6, meanOffset: index * 1.5, targetMean: (previous?.targetMean ?? 10) + 1.5, minValue: previous?.minValue ?? 0, maxValue: previous?.maxValue ?? null, targetSd: previous?.targetSd ?? 1.2, color: colors[index % colors.length] }
+  return { id: `group-${Date.now()}-${index}`, name: `Group ${index + 1}`, n: 8, meanOffset: index * 1.5, targetMean: (previous?.targetMean ?? 10) + 1.5, minValue: previous?.minValue ?? 0, maxValue: previous?.maxValue ?? null, targetSd: previous?.targetSd ?? 1.2, color: colors[index % colors.length] }
 }
 
 export default function App() {
@@ -109,6 +135,7 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement>(null)
   const selected = report.candidates[selectedIndex] ?? report.candidates[0]
   const isMultiGroup = settings.groups.length >= 3
+  const isTwoWay = settings.analysisDesign === 'twoWay'
 
   const edit = (mutator: (draft: GeneratorSettings) => void) => {
     setSettings((current) => {
@@ -125,6 +152,14 @@ export default function App() {
     if (draft.groups.length >= 3) draft.method = 'anova'
   })
 
+  const setAnalysisDesign = (design: GeneratorSettings['analysisDesign']) => edit((draft) => {
+    draft.analysisDesign = design ?? 'single'
+    if (draft.analysisDesign === 'twoWay') {
+      if (!draft.twoWay) draft.twoWay = cloneSettings(defaultSettings).twoWay
+      syncTwoWayGroups(draft)
+    }
+  })
+
   const removeGroup = (id: string) => edit((draft) => {
     if (draft.groups.length <= 2) return
     draft.groups = draft.groups.filter((group) => group.id !== id)
@@ -138,10 +173,11 @@ export default function App() {
   })
 
   const applyBatchSettings = () => edit((draft) => {
+    const n = draft.batchN ?? 8
     const minimum = draft.batchMinValue ?? 0
     const maximum = draft.batchMaxValue ?? null
     const targetSd = draft.batchTargetSd ?? 1.2
-    draft.groups.forEach((group) => { group.minValue = minimum; group.maxValue = maximum; group.targetSd = targetSd })
+    draft.groups.forEach((group) => { group.n = n; group.minValue = minimum; group.maxValue = maximum; group.targetSd = targetSd })
   })
 
   const resetForm = () => {
@@ -191,6 +227,12 @@ export default function App() {
     setNotice('已复制为列式数据')
   }
 
+  const copyGroupedData = async () => {
+    if (!selected || !isTwoWay) return
+    await copyPrismGrouped(selected, report.settings)
+    setNotice('已复制为 Prism 分组表')
+  }
+
   const exportPng = () => {
     const url = chartRef.current?.getEchartsInstance().getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' })
     if (!url) return
@@ -211,14 +253,14 @@ export default function App() {
     <div className="workspace"><div className="config-column">
       <Section number={1} title="数据设置" subtitle="选择数值类型、保留位数和分布形态；离散大小在每组的目标 SD 中设置"><div className="grid three"><Field label="数据类型"><select value={settings.dataType} onChange={(event) => edit((draft) => { draft.dataType = event.target.value as GeneratorSettings['dataType']; if (draft.dataType === 'integer') draft.decimals = 0 })}><option value="decimal">小数</option><option value="integer">整数</option></select></Field><Field label="小数位数"><div className="decimal-setting"><Numeric value={settings.decimals ?? 2} min={0} max={12} disabled={settings.dataType === 'integer' || settings.decimals === null} onChange={(value) => edit((draft) => { draft.decimals = value })} /><button type="button" className={settings.decimals === null ? 'active' : ''} disabled={settings.dataType === 'integer'} onClick={() => edit((draft) => { draft.decimals = draft.decimals === null ? 2 : null })}>{settings.decimals === null ? '不限制 ✓' : '不做要求'}</button></div></Field><Field label="分布形态"><select value={settings.distribution} onChange={(event) => edit((draft) => { draft.distribution = event.target.value as GeneratorSettings['distribution'] })}><option value="normal">正态分布</option><option value="lognormal">对数正态（log 原始值后近似正态）</option><option value="irregular">轻度不规则（轻微偏态）</option></select></Field><Field label="不规则程度"><Numeric value={settings.irregularity} min={0} max={1} step={0.05} disabled={settings.distribution !== 'irregular'} onChange={(value) => edit((draft) => { draft.irregularity = value })} /></Field><Field label="最大尝试次数"><Numeric value={settings.maxAttempts} min={1000} max={500000} step={1000} onChange={(value) => edit((draft) => { draft.maxAttempts = value })} /></Field></div></Section>
 
-      <Section number={2} title="统计设计" subtitle="两组使用 t-test；三组及以上自动切换为 one-way ANOVA">
-        <div className="grid three"><Field label="统计方法">{isMultiGroup ? <div className="auto-method"><strong>One-way ANOVA</strong><small>已根据组数自动选择</small></div> : <select value={settings.method} onChange={(event) => edit((draft) => { draft.method = event.target.value as GeneratorSettings['method'] })}><option value="welch">Welch t-test</option><option value="student">Student t-test</option><option value="paired">Paired t-test</option></select>}</Field><Field label="检验侧数"><select disabled={isMultiGroup} value={settings.tail} onChange={(event) => edit((draft) => { draft.tail = event.target.value as GeneratorSettings['tail'] })}><option value="two-sided">双侧</option><option value="greater">单侧：第二组更高</option><option value="less">单侧：第二组更低</option></select></Field><Field label="项目名称"><input value={settings.projectName} onChange={(event) => edit((draft) => { draft.projectName = event.target.value })} /></Field></div>
-        <div className="batch-range"><div><strong>批量范围与离散设置</strong><small>应用后覆盖所有组；单组仍可继续单独修改</small></div><Field label="批量最小值"><Numeric value={settings.batchMinValue ?? 0} step={0.1} onChange={(value) => edit((draft) => { draft.batchMinValue = value })} /></Field><Field label="批量最大值"><OptionalNumeric value={settings.batchMaxValue} step={0.1} placeholder="不限制" onChange={(value) => edit((draft) => { draft.batchMaxValue = value })} /></Field><Field label="批量离散 SD"><Numeric value={settings.batchTargetSd ?? 1.2} min={0.01} step={0.1} onChange={(value) => edit((draft) => { draft.batchTargetSd = value })} /></Field><button className="button secondary batch-apply" onClick={applyBatchSettings}>应用到所有组</button></div><div className="group-list">{settings.groups.map((group, index) => <article className="group-card" key={group.id}><span className="group-mark" style={{ background: group.color }}>{String.fromCharCode(65 + index)}</span><Field label="组名称"><input value={group.name} onChange={(event) => updateGroup(group.id, (item) => { item.name = event.target.value })} /></Field><Field label="n"><Numeric value={group.n} min={2} max={50} onChange={(value) => updateGroup(group.id, (item) => { item.n = value })} /></Field><Field label="目标均值"><Numeric value={group.targetMean} step={0.1} onChange={(value) => updateGroup(group.id, (item) => { item.targetMean = value })} /></Field><Field label="离散 SD"><Numeric value={group.targetSd} min={0.01} step={0.1} onChange={(value) => updateGroup(group.id, (item) => { item.targetSd = value })} /></Field><Field label="最小值"><Numeric value={group.minValue} step={0.1} onChange={(value) => updateGroup(group.id, (item) => { item.minValue = value })} /></Field><Field label="最大值"><OptionalNumeric value={group.maxValue} step={0.1} placeholder="不限制" onChange={(value) => updateGroup(group.id, (item) => { item.maxValue = value })} /></Field><button className="remove-group" disabled={settings.groups.length <= 2} title="删除组" onClick={() => removeGroup(group.id)}><X size={14} /></button></article>)}<button className="add-group" onClick={addGroup}><Plus size={17} />添加一组</button></div>
+      <Section number={2} title="统计设计" subtitle={isTwoWay ? '可增删两个因素的水平；数据按 m × k 单元格生成并计算主效应与交互作用' : '两组使用 t-test；三组及以上自动切换为 one-way ANOVA'}>
+        <div className="grid three"><Field label="统计方法"><select value={isTwoWay ? 'twoWay' : (settings.method === 'anova' ? 'oneWay' : settings.method)} onChange={(event) => event.target.value === 'twoWay' ? setAnalysisDesign('twoWay') : edit((draft) => { draft.analysisDesign = 'single'; draft.method = event.target.value === 'oneWay' ? 'anova' : event.target.value as GeneratorSettings['method'] })}><option value="welch">Welch t-test</option><option value="student">Student t-test</option><option value="paired">Paired t-test</option><option value="oneWay">One-way ANOVA</option><option value="twoWay">Two-way ANOVA</option></select></Field><Field label="检验侧数"><select disabled={isMultiGroup || isTwoWay} value={settings.tail} onChange={(event) => edit((draft) => { draft.tail = event.target.value as GeneratorSettings['tail'] })}><option value="two-sided">双侧</option><option value="greater">单侧：第二组更高</option><option value="less">单侧：第二组更低</option></select></Field><Field label="项目名称"><input value={settings.projectName} onChange={(event) => edit((draft) => { draft.projectName = event.target.value })} /></Field></div>
+        {isTwoWay ? <TwoWayEditor settings={settings} onEdit={edit} /> : <><div className="batch-range"><div><strong>批量设置</strong><small>应用后覆盖所有组；单组仍可继续单独修改</small></div><Field label="批量 n"><Numeric value={settings.batchN ?? 8} min={2} max={50} onChange={(value) => edit((draft) => { draft.batchN = value })} /></Field><Field label="批量最小值"><Numeric value={settings.batchMinValue ?? 0} step={0.1} onChange={(value) => edit((draft) => { draft.batchMinValue = value })} /></Field><Field label="批量最大值"><OptionalNumeric value={settings.batchMaxValue} step={0.1} placeholder="不限制" onChange={(value) => edit((draft) => { draft.batchMaxValue = value })} /></Field><Field label="批量离散 SD"><Numeric value={settings.batchTargetSd ?? 1.2} min={0.01} step={0.1} onChange={(value) => edit((draft) => { draft.batchTargetSd = value })} /></Field><button className="button secondary batch-apply" onClick={applyBatchSettings}>应用到所有组</button></div><div className="group-list">{settings.groups.map((group, index) => <article className="group-card" key={group.id}><span className="group-mark" style={{ background: group.color }}>{String.fromCharCode(65 + index)}</span><Field label="组名称"><input value={group.name} onChange={(event) => updateGroup(group.id, (item) => { item.name = event.target.value })} /></Field><Field label="n"><Numeric value={group.n} min={2} max={50} onChange={(value) => updateGroup(group.id, (item) => { item.n = value })} /></Field><Field label="目标均值"><Numeric value={group.targetMean} step={0.1} onChange={(value) => updateGroup(group.id, (item) => { item.targetMean = value })} /></Field><Field label="离散 SD"><Numeric value={group.targetSd} min={0.01} step={0.1} onChange={(value) => updateGroup(group.id, (item) => { item.targetSd = value })} /></Field><Field label="最小值"><Numeric value={group.minValue} step={0.1} onChange={(value) => updateGroup(group.id, (item) => { item.minValue = value })} /></Field><Field label="最大值"><OptionalNumeric value={group.maxValue} step={0.1} placeholder="不限制" onChange={(value) => updateGroup(group.id, (item) => { item.maxValue = value })} /></Field><button className="remove-group" disabled={settings.groups.length <= 2} title="删除组" onClick={() => removeGroup(group.id)}><X size={14} /></button></article>)}<button className="add-group" onClick={addGroup}><Plus size={17} />添加一组</button></div></>}
       </Section>
 
       <Section number={3} title="趋势与效应" subtitle="默认按每组手动填写的目标均值判断趋势；也可切换为递增、递减或各组接近"><div className="trend-control"><button className={settings.trend === 'custom' ? 'active' : ''} onClick={() => edit((draft) => { draft.trend = 'custom' })}>按手填均值</button><button className={settings.trend === 'ascending' ? 'active' : ''} onClick={() => edit((draft) => { draft.trend = 'ascending' })}>递增趋势</button><button className={settings.trend === 'descending' ? 'active' : ''} onClick={() => edit((draft) => { draft.trend = 'descending' })}>递减趋势</button><button className={settings.trend === 'similar' ? 'active' : ''} onClick={() => edit((draft) => { draft.trend = 'similar' })}>各组接近</button></div></Section>
 
-      <Section number={4} title="p 值约束" subtitle="下拉勾选需要约束的组对；未勾选组对仍计算 p 值，但不参与候选筛选"><PairwiseConstraintPanel settings={settings} onEdit={edit} /><p className="constraint-note">勾选的组对按所设 p 值区间筛选；未勾选的组对只按统计设计完成计算，不做 p 值要求。三组及以上的区间应用于 BH-FDR 校正后的成对比较。</p></Section>
+      <Section number={4} title="p 值约束" subtitle={isTwoWay ? '从 m × k 单元格中勾选需要约束的两两组对；未勾选的只计算、不筛选' : '下拉勾选需要约束的组对；未勾选组对仍计算 p 值，但不参与候选筛选'}><PairwiseConstraintPanel settings={settings} onEdit={edit} /><p className="constraint-note">勾选的组对按所设 p 值区间筛选；未勾选的组对只完成计算，不做 p 值要求。双因素模式的组对比较使用 Welch pairwise，并进行 BH-FDR 校正。</p></Section>
 
       <Section number={5} title="随机设置" subtitle="默认每次使用新的安全随机 seed；锁定后才能复现同一候选"><div className="seed-row"><button className={`lock-toggle ${settings.seedMode === 'locked' ? 'locked' : ''}`} onClick={() => edit((draft) => { draft.seedMode = draft.seedMode === 'locked' ? 'random' : 'locked' })}>{settings.seedMode === 'locked' ? <Lock size={16} /> : <Unlock size={16} />}{settings.seedMode === 'locked' ? '已锁定 seed' : '每次全新随机'}</button><Field label="复现 seed" hint={settings.seedMode === 'random' ? '生成后在结果中记录自动 seed' : '相同参数与 seed 得到相同候选'}><input disabled={settings.seedMode === 'random'} value={settings.seed} onChange={(event) => edit((draft) => { draft.seed = event.target.value })} /></Field><button className="button primary generate-large" onClick={generate} disabled={generating}>{generating ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}{generating ? '正在随机搜索' : '生成 3 套候选'}</button></div></Section>
     </div>
@@ -237,12 +279,13 @@ export default function App() {
           <div><span>组数</span><strong>{selected.summaries.length}</strong></div>
         </div>
         <section className="stat-card">
-          <header><div><h3>统计摘要</h3><p>{methodLabel(selected.test.method)} · {selected.test.method === 'anova' ? `df=${selected.test.dfBetween},${selected.test.dfWithin}` : selected.test.tail}</p></div><span className="seed-display">seed {selected.seed.slice(0, 18)}…</span></header>
+          <header><div><h3>统计摘要</h3><p>{methodLabel(selected.test.method, selected.test.design)} · {selected.test.design === 'two-way' ? `残差 df=${selected.test.twoWay?.residualDegreesOfFreedom}` : selected.test.method === 'anova' ? `df=${selected.test.dfBetween},${selected.test.dfWithin}` : selected.test.tail}</p></div><span className="seed-display">seed {selected.seed.slice(0, 18)}…</span></header>
           <div className="summary-grid">{selected.summaries.map((summary, index) => <article key={summary.groupId}><span className="group-mark" style={{ background: report.settings.groups[index]?.color }}>{String.fromCharCode(65 + index)}</span><strong>{summary.name}</strong><dl><div><dt>n</dt><dd>{summary.n}</dd></div><div><dt>Mean</dt><dd>{summary.mean.toFixed(4)}</dd></div><div><dt>SD</dt><dd>{summary.sd.toFixed(4)}</dd></div><div><dt>SEM</dt><dd>{summary.sem.toFixed(4)}</dd></div></dl></article>)}</div>
           <div className="test-strip"><div><span>{selected.test.method === 'anova' ? 'F' : 't'}</span><strong>{selected.test.statistic.toFixed(4)}</strong></div><div><span>df</span><strong>{selected.test.method === 'anova' ? `${selected.test.dfBetween},${selected.test.dfWithin}` : selected.test.degreesOfFreedom.toFixed(3)}</strong></div><div><span>p</span><strong>{formatP(selected.test.pValue)}</strong></div><div><span>{selected.test.method === 'anova' ? 'η²' : "Cohen's d/dz"}</span><strong>{selected.test.effectSize.toFixed(3)}</strong></div></div>
+          {selected.test.design === 'two-way' && selected.test.twoWay && <div className="two-way-results">{[selected.test.twoWay.factorA, selected.test.twoWay.factorB, selected.test.twoWay.interaction].map((effect) => <div key={effect.name}><strong>{effect.name}</strong><span>F({effect.degreesOfFreedom},{selected.test.twoWay!.residualDegreesOfFreedom})={effect.statistic.toFixed(3)}</span><b>p={formatP(effect.pValue)}</b></div>)}</div>}
         </section>
-        {selected.test.method === 'anova' && <section className="pairwise-card"><header><div><h3>组间比较</h3><p>Welch pairwise + BH-FDR</p></div></header><div className="pairwise-list">{selected.test.pairwise?.map((pair) => <div className="pairwise-row" key={`${pair.leftGroupId}-${pair.rightGroupId}`}><span>{pair.leftGroupName} vs {pair.rightGroupName}</span><strong>{pair.label}</strong><small>p={formatP(pair.pValue)} · FDR={formatP(pair.adjustedPValue)}</small></div>)}</div></section>}
-        <section className="raw-card"><header><div><h3>原始数据</h3><p>最终舍入值；复制到 Prism、R 或 Python 可独立回算</p></div><div><button className="icon-text" onClick={copyData}><Copy size={14} />复制列数据</button><button className="icon-text" onClick={() => exportCsv(selected, report.settings)}><Download size={14} />CSV</button></div></header><div className="raw-table"><table><thead><tr><th>#</th>{selected.summaries.map((summary) => <th key={summary.groupId}>{summary.name}</th>)}</tr></thead><tbody>{Array.from({ length: Math.max(...selected.values.map((values) => values.length)) }, (_, index) => <tr key={index}><td>{index + 1}</td>{selected.values.map((values, groupIndex) => <td key={selected.summaries[groupIndex]?.groupId}>{values[index] ?? ''}</td>)}</tr>)}</tbody></table></div></section>
+        {selected.test.method === 'anova' && selected.test.pairwise?.length ? <section className="pairwise-card"><header><div><h3>组间比较</h3><p>Welch pairwise + BH-FDR</p></div></header><div className="pairwise-list">{selected.test.pairwise.map((pair) => <div className="pairwise-row" key={`${pair.leftGroupId}-${pair.rightGroupId}`}><span>{pair.leftGroupName} vs {pair.rightGroupName}</span><strong>{pair.label}</strong><small>p={formatP(pair.pValue)} · FDR={formatP(pair.adjustedPValue)}</small></div>)}</div></section> : null}
+        <section className="raw-card"><header><div><h3>原始数据</h3><p>{isTwoWay ? '按因素 A × 因素 B 展开；表格结构与 Prism Grouped 一致' : '最终舍入值；复制到 Prism、R 或 Python 可独立回算'}</p></div><div><button className="icon-text" onClick={isTwoWay ? copyGroupedData : copyData}><Copy size={14} />{isTwoWay ? '复制 Prism 分组表' : '复制列数据'}</button><button className="icon-text" onClick={() => exportCsv(selected, report.settings)}><Download size={14} />CSV</button></div></header><div className="raw-table">{isTwoWay ? <TwoWayRawTable candidate={selected} settings={report.settings} /> : <table><thead><tr><th>#</th>{selected.summaries.map((summary) => <th key={summary.groupId}>{summary.name}</th>)}</tr></thead><tbody>{Array.from({ length: Math.max(...selected.values.map((values) => values.length)) }, (_, index) => <tr key={index}><td>{index + 1}</td>{selected.values.map((values, groupIndex) => <td key={selected.summaries[groupIndex]?.groupId}>{values[index] ?? ''}</td>)}</tr>)}</tbody></table>}</div></section>
         <section className="checks-card"><header><ShieldCheck size={17} /><h3>约束验证</h3><span>{report.attempts.toLocaleString()} 次完整随机抽样</span></header>{selected.checks.map((check) => <div className={`check-row ${check.status.toLowerCase()}`} key={check.label}>{check.status === 'PASS' ? <Check size={15} /> : check.status === 'WARN' ? <AlertTriangle size={15} /> : <X size={15} />}<strong>{check.label}</strong><span>{check.detail}</span></div>)}</section>
       </>}
     </aside></div><footer>SIMULATED / 合成模拟数据　·　生成日志、约束和随机 seed 随项目导出　·　不代表真实实验观测</footer>{notice && <div className="toast" onClick={() => setNotice('')}>{notice}</div>}

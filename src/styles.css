@@ -52,6 +52,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .tabs { height: 53px; display: flex; align-items: end; gap: 10px; border-bottom: 1px solid var(--border); }
 .tabs button { height: 43px; display: flex; align-items: center; gap: 8px; padding: 0 18px; border: 0; border-bottom: 2px solid var(--accent); color: var(--accent); background: rgba(52, 172, 158, .12); font-weight: 750; }
+.mode-switch { display: flex; align-items: center; gap: 4px; margin: 0 0 8px 2px; padding: 3px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
+.mode-switch button { height: 28px; padding: 0 9px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font-size: 9px; font-weight: 700; }
+.mode-switch button.active { color: #082c27; background: var(--accent); }
 .independent-badge { margin-bottom: 11px; padding: 4px 8px; border-radius: 4px; color: #efc39f; background: rgba(211, 139, 89, .13); font-size: 10px; }
 .dirty { margin: 0 4px 11px auto; color: #efb984; font-size: 11px; }
 .warning-banner { min-height: 42px; margin: 13px 0; padding: 9px 14px; display: flex; align-items: center; gap: 8px; border: 1px solid #6c4f3f; border-radius: 7px; color: #f0c4a3; background: #38271f; font-size: 11px; }
@@ -218,6 +221,48 @@ th { position: sticky; top: 0; color: var(--muted); background: #0b2926; }
 .check-row.pass > svg { color: #6cdaa8; }
 .check-row.warn > svg { color: #e1b16f; }
 .check-row.fail > svg { color: var(--danger); }
+
+/* Longitudinal time-series editor and preview */
+.time-series-mode > .legacy-section { display: none; }
+.time-series-note { margin-bottom: 11px; padding: 9px 10px; border: 1px dashed var(--accent-dark); border-radius: 6px; color: var(--muted); background: rgba(55, 183, 167, .08); font-size: 10px; line-height: 1.45; }
+.ts-data-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ts-builder-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.ts-list-panel { padding: 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); }
+.ts-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ts-panel-heading strong { font-size: 11px; }
+.ts-group-list, .ts-time-list { display: flex; flex-direction: column; gap: 6px; }
+.ts-group-row { display: grid; grid-template-columns: 30px minmax(90px, 1fr) 62px 28px; gap: 6px; align-items: end; }
+.ts-group-row .field, .ts-time-row .field { min-width: 0; }
+.ts-group-row > input { min-width: 0; height: 32px; }
+.ts-time-row { display: grid; grid-template-columns: 25px 78px minmax(90px, 1fr) 28px; gap: 6px; align-items: end; }
+.ts-time-row > .field input { min-width: 0; }
+.time-index { align-self: center; color: var(--muted); font-size: 10px; text-align: center; }
+.ts-batch-row { display: flex; align-items: end; gap: 8px; margin-top: 9px; }
+.ts-batch-row small, .ts-help { color: var(--muted); font-size: 9px; }
+.ts-cell-grid-wrap { margin-top: 12px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; }
+.ts-cell-grid { min-width: 680px; table-layout: fixed; }
+.ts-cell-grid th, .ts-cell-grid td { min-width: 150px; padding: 8px; vertical-align: top; border-top: 1px solid var(--border); border-left: 1px solid var(--border); text-align: left; }
+.ts-cell-grid thead th { position: sticky; top: 0; z-index: 2; color: var(--accent); background: #0b2926; text-align: center; }
+.ts-cell-grid thead th small { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; font-weight: 400; }
+.ts-cell-grid tbody > th { position: sticky; left: 0; z-index: 1; min-width: 130px; color: var(--text); background: #0d302c; }
+.ts-cell-grid tbody > th .group-mark { display: inline-grid; margin-right: 5px; vertical-align: middle; }
+.ts-cell-config { display: flex; flex-direction: column; gap: 6px; }
+.ts-cell-config input { height: 30px; }
+.ts-chart-settings { display: grid; grid-template-columns: 1.3fr 1fr 1fr 100px; gap: 8px; margin-top: 12px; }
+.ts-seed-row { display: grid; grid-template-columns: 180px minmax(180px, 1fr) 84px 180px; gap: 10px; align-items: end; margin-top: 12px; }
+.ts-result-meta { color: var(--muted); font-size: 9px; }
+.ts-anova-results { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); }
+.ts-anova-results > div { min-height: 65px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 10px; }
+.ts-anova-results > div + div { border-left: 1px solid var(--border); }
+.ts-anova-results strong { font-size: 10px; }
+.ts-anova-results span { color: var(--muted); font-size: 9px; }
+.ts-anova-results b { color: var(--accent); font-size: 10px; }
+.ts-raw-table { min-width: max-content; }
+.ts-summary-table { min-width: 520px; }
+.ts-summary-table th, .ts-summary-table td { white-space: nowrap; }
+.ts-summary-table td { text-align: center; }
+.ts-summary-table td strong, .ts-summary-table td small { display: block; }
+.ts-summary-table td small { margin-top: 3px; color: var(--muted); font-size: 8px; }
 
 footer { padding: 13px 3px 0; color: var(--muted); font-size: 9px; }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 20; max-width: 460px; padding: 12px 15px; border: 1px solid var(--accent-dark); border-radius: 7px; color: #082b26; background: var(--accent); box-shadow: 0 15px 35px rgba(0, 0, 0, .28); font-size: 11px; font-weight: 750; cursor: pointer; }

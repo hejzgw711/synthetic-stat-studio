@@ -3,6 +3,8 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 const AUTH_USERNAME = 'bigNBny'
 const PASSWORD_SHA256 = 'a721200c375289479a02127718f6bc25b64c5a5e87a71ec9735f3e1842d34886'
 const SESSION_KEY = 'synthetic-stat-studio-authenticated'
+const PERSISTENT_SESSION_KEY = 'synthetic-stat-studio-authenticated-persistent'
+const REMEMBER_KEY = 'synthetic-stat-studio-remember'
 
 async function sha256(value: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
@@ -16,15 +18,38 @@ async function verifyCredentials(username: string, password: string) {
 
 function hasSession() {
   try {
-    return window.sessionStorage.getItem(SESSION_KEY) === '1'
+    return window.sessionStorage.getItem(SESSION_KEY) === '1' || window.localStorage.getItem(PERSISTENT_SESSION_KEY) === '1'
   } catch {
     return false
+  }
+}
+
+function rememberedByDefault() {
+  try {
+    return window.localStorage.getItem(REMEMBER_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function storeSession(remember: boolean) {
+  try {
+    if (remember) {
+      window.localStorage.setItem(PERSISTENT_SESSION_KEY, '1')
+      window.sessionStorage.removeItem(SESSION_KEY)
+    } else {
+      window.sessionStorage.setItem(SESSION_KEY, '1')
+      window.localStorage.removeItem(PERSISTENT_SESSION_KEY)
+    }
+  } catch {
+    try { window.sessionStorage.setItem(SESSION_KEY, '1') } catch { /* Storage is optional for this static gate. */ }
   }
 }
 
 export function clearAuthSession() {
   try {
     window.sessionStorage.removeItem(SESSION_KEY)
+    window.localStorage.removeItem(PERSISTENT_SESSION_KEY)
   } catch {
     // Continue even when browser storage is unavailable.
   }
@@ -34,6 +59,7 @@ export function AuthGate({ children }: { children: (onLogout: () => void) => Rea
   const [authenticated, setAuthenticated] = useState(hasSession)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(rememberedByDefault)
   const [error, setError] = useState('')
   const [checking, setChecking] = useState(false)
 
@@ -43,7 +69,7 @@ export function AuthGate({ children }: { children: (onLogout: () => void) => Rea
     setChecking(true)
     try {
       if (await verifyCredentials(username, password)) {
-        try { window.sessionStorage.setItem(SESSION_KEY, '1') } catch { /* Session-only fallback. */ }
+        storeSession(remember)
         setAuthenticated(true)
         setPassword('')
       } else {
@@ -63,6 +89,11 @@ export function AuthGate({ children }: { children: (onLogout: () => void) => Rea
     setPassword('')
   }
 
+  const changeRemember = (checked: boolean) => {
+    setRemember(checked)
+    try { window.localStorage.setItem(REMEMBER_KEY, checked ? '1' : '0') } catch { /* Preference is optional. */ }
+  }
+
   if (authenticated) return <>{children(logout)}</>
 
   return <main className="auth-shell">
@@ -73,6 +104,7 @@ export function AuthGate({ children }: { children: (onLogout: () => void) => Rea
       <form className="auth-form" onSubmit={submit}>
         <label className="auth-field"><span>账号</span><input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <label className="auth-field"><span>密码</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <label className="auth-remember"><input type="checkbox" checked={remember} onChange={(event) => changeRemember(event.target.checked)} /><span>在此浏览器保持登录</span></label>
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button className="auth-submit" type="submit" disabled={checking}>{checking ? '正在验证…' : '登录'}</button>
       </form>

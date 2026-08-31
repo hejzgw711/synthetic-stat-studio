@@ -276,6 +276,8 @@ footer { padding: 13px 3px 0; color: var(--muted); font-size: 9px; }
 .auth-form { display: flex; flex-direction: column; gap: 13px; margin-top: 24px; }
 .auth-field { display: flex; flex-direction: column; gap: 6px; color: #8da7a3; font-size: 10px; }
 .auth-field input { height: 40px; }
+.auth-remember { display: flex; align-items: center; gap: 7px; color: #8da7a3; font-size: 10px; cursor: pointer; }
+.auth-remember input { width: 14px; height: 14px; margin: 0; accent-color: #62d3c2; }
 .auth-submit { height: 40px; margin-top: 3px; border: 1px solid #62d3c2; border-radius: 6px; color: #062a25; background: #62d3c2; font-weight: 750; }
 .auth-submit:hover { filter: brightness(1.08); }
 .auth-submit:disabled { cursor: wait; opacity: .7; }
